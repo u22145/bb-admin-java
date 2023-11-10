@@ -1,0 +1,106 @@
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.playbaby.bb.admin.common.db.mapper.GuildAnchorMapper">
+    <select id="guildAnchorExists" resultType="java.lang.Boolean">
+        select count(1)>0 from guild_anchor_setting where gid=#{gid} AND uid=#{uid}
+    </select>
+
+    <insert id="upsertGuildAnchorSetting" parameterType="com.playbaby.bb.admin.common.entity.io.GuildAnchorSettingIO">
+        INSERT INTO guild_anchor_setting (uid, gid, performance, created_at) values
+        (#{po.uid}, #{po.gid}, #{po.performance}, now())
+        ON DUPLICATE KEY UPDATE
+        performance=values(performance),
+        updated_at=now()
+    </insert>
+
+    <insert id="upsertGuildAnchorTiers" parameterType="java.util.List">
+        INSERT INTO guild_anchor_tiers (uid, goal_count, gift_commission, lottery_commission, private_stream_commission,
+        stream_ticket_commission, ugc_commission, dating_commission, message_commission, created_at) values
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=",">
+        (
+            #{elem.uid}, #{elem.goalCount}, #{elem.giftCommission}, #{elem.lotteryCommission},
+            #{elem.privateStreamCommission}, #{elem.streamTicketCommission}, #{elem.ugcCommission},
+            #{elem.datingCommission}, #{elem.messageCommission}, now()
+        )
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+        gift_commission=values(gift_commission),
+        lottery_commission=values(lottery_commission),
+        private_stream_commission=values(private_stream_commission),
+        stream_ticket_commission=values(stream_ticket_commission),
+        ugc_commission=values(ugc_commission),
+        dating_commission=values(dating_commission),
+        message_commission=values(message_commission),
+        updated_at=now()
+    </insert>
+
+    <update id="updateGuildAnchorTiers" parameterType="java.util.List">
+        UPDATE guild_anchor_tiers SET
+        gift_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.giftCommission}
+        </foreach>,
+        lottery_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.lotteryCommission}
+        </foreach>,
+        private_stream_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.privateStreamCommission}
+        </foreach>,
+        stream_ticket_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.streamTicketCommission}
+        </foreach>,
+        ugc_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.ugcCommission}
+        </foreach>,
+        dating_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.datingCommission}
+        </foreach>,
+        message_commission=
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator=" " open="case" close="end">
+            when id=#{elem.id} then #{elem.messageCommission}
+        </foreach>,
+        updated_at=now()
+        where id in
+        <foreach collection="guildAnchorTiers" item="elem" index="index" separator="," open="(" close=")">#{elem.id}</foreach>
+        AND uid=#{uid}
+    </update>
+
+    <select id="getGuildAnchor"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.soc.GMAnchorVO">
+        SELECT
+            s.gid,
+            u.id uid,
+            u.nickname,
+            t.id tier_id,
+            t.gift_commission,
+            t.lottery_commission,
+            t.private_stream_commission,
+            t.stream_ticket_commission,
+            t.dating_commission,
+            t.ugc_commission,
+            t.message_commission,
+            s.performance,
+            count(if(turnover &gt;= gas.anchor_performance, 1, null)) perfReached,
+            count(if(turnover &lt; gas.anchor_performance, 1, null)) perfMissed,
+            0 status
+        FROM
+            user_1_0 u
+            join guild_anchor_setting s on (u.id=s.uid)
+            join guild_anchor_tiers t ON (s.uid=t.uid and t.goal_count=1)
+            left join guild_anchor_settlements gas on (gas.guild_id=s.gid and gas.anchor_id=u.id)
+        WHERE
+            t.goal_count=1
+            and s.gid=#{io.guildInt}
+            and if (#{io.uidInt} is null, 1, s.uid=#{io.uidInt})
+            and if (#{io.fromDate} is null, 1, settled_for &gt;= #{io.fromDate})
+            and if (#{io.toDate} is null, 1, settled_for &lt;= #{io.toDate})
+        group by
+            s.gid, s.uid
+    </select>
+</mapper>

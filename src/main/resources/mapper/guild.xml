@@ -1,0 +1,296 @@
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.playbaby.bb.admin.common.db.mapper.GuildMapper">
+    <select id="findGuilds"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildQueryIO"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.GuildVO">
+        select
+            g.*
+        from
+            guilds g
+        where
+                if (#{io.guildInt} is null, 1, g.id=#{io.guildInt})
+            and if (#{io.gmInt} is null, 1, g.master_uid=#{io.gmInt})
+            and if (#{io.statusInt} is null, 1, g.status=#{io.statusInt})
+    </select>
+
+    <select id="guildExists" resultType="java.lang.Boolean">
+        select count(1)>0 from guilds where id=#{id}
+    </select>
+
+    <select id="isAnchorMemberOf" resultType="java.lang.Boolean">
+        select count(1)>0 from guild_anchor_setting where gid=#{guild_id} and uid=#{uid}
+    </select>
+
+    <insert id="createGuild" parameterType="com.playbaby.bb.admin.common.entity.po.GuildPO"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        insert into guilds (master_uid, name, gift_commission, lottery_commission, private_stream_commission,
+        stream_ticket_commission, ugc_commission, dating_commission, message_commission, status, created_at)
+        values (
+            #{guild.masterId}, #{guild.name}, #{guild.giftCommission}, #{guild.lotteryCommission},
+            #{guild.privateStreamCommission}, #{guild.streamTicketCommission}, #{guild.ugcCommission},
+            #{guild.datingCommission}, #{guild.messageCommission}, #{guild.status}, now()
+        )
+    </insert>
+
+    <update id="updateGuild" parameterType="com.playbaby.bb.admin.common.entity.po.GuildPO">
+        update guilds set
+            gift_commission=#{guild.giftCommission},
+            lottery_commission=#{guild.lotteryCommission},
+            private_stream_commission=#{guild.privateStreamCommission},
+            stream_ticket_commission=#{guild.streamTicketCommission},
+            ugc_commission=#{guild.ugcCommission},
+            dating_commission=#{guild.datingCommission},
+            message_commission=#{guild.messageCommission},
+            status=#{guild.status},
+            updated_at=now()
+        where
+            id=#{guild.id}
+    </update>
+
+    <insert id="invokeGuildSettlement" parameterType="com.playbaby.bb.admin.common.entity.po.GuildSettlementPO">
+        insert ignore into guild_settlements
+        (guild_id, settled_for, gift_commission, lottery_commission, private_stream_commission, stream_ticket_commission, ugc_commission, dating_commission, message_commission,
+         gift_turnover, lottery_turnover, private_stream_turnover, stream_ticket_turnover, ugc_turnover, dating_turnover, message_turnover, turnover,
+         gift_gs, lottery_gs, private_stream_gs, stream_ticket_gs, ugc_gs, dating_gs, message_gs, platform_share, guild_share,
+         live_duration, ps_duration, ticket_buyers, gift_buyers, ps_cnt, lotto_cnt, lotto_won_cnt, ugc_cnt, dating_cnt, pm_cnt, pm_senders)
+        with live_rpt as (
+            select
+                guild_id, sum(gift_exp) gift_exp, sum(ticket_exp) ticket_exp,
+                sum(ticket_buyers) ticket_buyers, sum(gift_buyers) gift_buyers,
+                sum(duration) live_duration
+            from live_streams
+                where started_at &gt;= #{po.from} and started_at &lt;= #{po.to}
+            group by guild_id
+        ), ps_rpt as (
+            select
+                guild_id, sum(gift_exp) gift_exp, sum(stream_exp) stream_exp,
+                sum(duration) ps_duration, count(if(gift_exp>0, 1, null)) gift_buyers,
+                count(1) as ps_cnt
+            from private_streams
+            where
+                connected_at &gt;= #{po.from} and connected_at &lt;= #{po.to}
+            group by guild_id
+        ), pm_rpt as (
+            select
+                guild_id, sum(pm_exp) pm_exp, count(1) pm_cnt, count(distinct from_uid) pm_senders
+            from private_messages
+            where
+                created_at &gt;= #{po.from} and created_at &lt;= #{po.to}
+            group by guild_id
+        ), turnovers as (
+        select
+            g.id guild_id,
+            g.gift_commission,
+            g.lottery_commission,
+            g.private_stream_commission,
+            g.stream_ticket_commission,
+            g.ugc_commission ugc_commission,
+            g.dating_commission dating_commission,
+            g.message_commission,
+
+            (ifnull(ls.gift_exp, 0) + ifnull(ps.gift_exp, 0)) gift_turnover,
+            0 lottery_turnover,
+            ifnull(ps.stream_exp, 0) private_stream_turnover,
+            ifnull(ls.ticket_exp, 0.) stream_ticket_turnover,
+            0 ugc_turnover,
+            0 dating_turnover,
+            ifnull(pm.pm_exp, 0) message_turnover,
+
+            ifnull(ls.live_duration, 0) live_duration,
+            ifnull(ps.ps_duration, 0) ps_duration,
+            ifnull(ls.ticket_buyers, 0) ticket_buyers,
+            (ifnull(ls.gift_buyers, 0) + ifnull(ps.gift_buyers, 0)) gift_buyers,
+            ifnull(ps.ps_cnt, 0) ps_cnt,
+            ifnull(pm.pm_cnt, 0) pm_cnt,
+            ifnull(pm.pm_senders, 0) pm_senders
+        from
+            guilds g
+            left join live_rpt ls on (g.id=ls.guild_id)
+            left join ps_rpt ps on (g.id=ps.guild_id)
+            left join pm_rpt pm on (g.id=pm.guild_id)
+        ), total_turnover as (
+        select
+            *,
+            (gift_commission * gift_turnover) gift_gs,
+            (lottery_commission * lottery_turnover) lottery_gs,
+            (private_stream_commission * private_stream_turnover) private_stream_gs,
+            (stream_ticket_commission * stream_ticket_turnover) stream_ticket_gs,
+            (ugc_turnover * ugc_commission) ugc_gs,
+            (dating_turnover * dating_commission) dating_gs,
+            (message_turnover * message_commission) message_gs,
+            (gift_turnover+lottery_turnover+private_stream_turnover+stream_ticket_turnover+ugc_turnover+dating_turnover+message_turnover) total_turnover
+        from
+            turnovers
+        ), shares as (
+        select
+            *,
+            (gift_gs+lottery_gs+private_stream_gs+stream_ticket_gs+ugc_gs+dating_gs+message_gs) total_gs
+        from
+            total_turnover
+        ) select
+            guild_id,
+            #{po.settledFor} settled_for,
+            gift_commission,
+            lottery_commission,
+            private_stream_commission,
+            stream_ticket_commission,
+            ugc_commission,
+            dating_commission,
+            message_commission,
+            gift_turnover,
+            lottery_turnover,
+            private_stream_turnover,
+            stream_ticket_turnover,
+            ugc_turnover,
+            dating_turnover,
+            message_turnover,
+            total_turnover turnover,
+            gift_gs,
+            lottery_gs,
+            private_stream_gs,
+            stream_ticket_gs,
+            ugc_gs,
+            dating_gs,
+            message_gs,
+            (total_turnover - total_gs) platform_share,
+            total_gs guild_share,
+            live_duration,
+            ps_duration,
+            ticket_buyers,
+            gift_buyers,
+            ps_cnt,
+            0 lotto_cnt,
+            0 lotto_won_cnt,
+            0 ugc_cnt,
+            0 dating_cnt,
+            pm_cnt,
+            pm_senders
+        from
+            shares
+    </insert>
+
+    <insert id="invokeGuildAnchorSettlement" parameterType="com.playbaby.bb.admin.common.entity.po.GuildSettlementPO">
+        insert into guild_anchor_settlements
+        (guild_id, anchor_id, settled_for, anchor_performance, gift_commission, lottery_commission, private_stream_commission, stream_ticket_commission, ugc_commission, dating_commission, message_commission, anchor_gift_commission, anchor_lottery_commission, anchor_private_stream_commission, anchor_stream_ticket_commission, anchor_ugc_commission, anchor_dating_commission, anchor_message_commission, gift_turnover, lottery_turnover, private_stream_turnover, stream_ticket_turnover, ugc_turnover, dating_turnover, message_turnover, turnover, gift_as, lottery_as, private_stream_as, stream_ticket_as, ugc_as, dating_as, message_as, guild_profit, anchor_profit)
+        with live_rpt as (
+          select
+          guild_id, anchor_uid, sum(gift_exp) gift_exp , sum(ticket_exp) ticket_exp
+          from live_streams
+          where started_at &gt;= #{po.from} and started_at &lt;= #{po.to}
+          group by guild_id, anchor_uid
+        ), ps_rpt as (
+          select
+          guild_id, anchor_uid, sum(gift_exp) gift_exp , sum(stream_exp) stream_exp
+          from private_streams
+          where
+            connected_at &gt;= #{po.from} and connected_at &lt;= #{po.to}
+           group by guild_id, anchor_uid
+        ), pm_rpt as (
+          select
+          guild_id, to_uid anchor_uid, sum(pm_exp) pm_exp
+          from private_messages
+          where created_at &gt;= #{po.from} and created_at &lt;= #{po.to}
+          group by guild_id, to_uid
+        ), turnovers as (
+          select
+            g.id guild_id,
+            gs.uid anchor_uid,
+            gs.performance,
+            g.gift_commission,
+            g.lottery_commission,
+            g.private_stream_commission,
+            g.stream_ticket_commission,
+            g.ugc_commission ugc_commission,
+            g.dating_commission dating_commission,
+            g.message_commission,
+            gat.gift_commission anchor_gift_commission,
+            gat.lottery_commission anchor_lottery_commission,
+            gat.private_stream_commission anchor_private_stream_commission,
+            gat.stream_ticket_commission anchor_stream_ticket_commission,
+            gat.ugc_commission anchor_ugc_commission,
+            gat.dating_commission anchor_dating_commission,
+            gat.message_commission anchor_message_commission,
+
+            (ifnull(ls.gift_exp, 0) + ifnull(ps.gift_exp, 0)) gift_turnover,
+            0 lottery_turnover,
+            ifnull(ps.stream_exp, 0) private_stream_turnover,
+            ifnull(ls.ticket_exp, 0.) stream_ticket_turnover,
+            0 ugc_turnover,
+            0 dating_turnover,
+            ifnull(pm.pm_exp, 0) message_turnover
+          from
+            guilds g
+            join guild_anchor_setting gs on (g.id=gs.gid)
+            join guild_anchor_tiers gat on (gs.uid=gat.uid and gat.goal_count=1)
+            left join live_rpt ls on (g.id=ls.guild_id and gs.uid=ls.anchor_uid)
+            left join ps_rpt ps on (g.id=ps.guild_id and gs.uid=ps.anchor_uid)
+            left join pm_rpt pm on (g.id=pm.guild_id and gs.uid=pm.anchor_uid)
+        ), total_turnover as (
+          select
+            *,
+            (gift_commission * gift_turnover) gift_gs,
+            (lottery_commission * lottery_turnover) lottery_gs,
+            (private_stream_commission * private_stream_turnover) private_stream_gs,
+            (stream_ticket_commission * stream_ticket_turnover) stream_ticket_gs,
+            (ugc_turnover * ugc_commission) ugc_gs,
+            (dating_turnover * dating_commission) dating_gs,
+            (message_turnover * message_commission) message_gs,
+
+            (gift_commission * anchor_gift_commission * gift_turnover) gift_as,
+            (lottery_commission * anchor_lottery_commission * lottery_turnover) lottery_as,
+            (private_stream_commission * anchor_private_stream_commission * private_stream_turnover) private_stream_as,
+            (stream_ticket_commission * anchor_stream_ticket_commission * stream_ticket_turnover) stream_ticket_as,
+            (ugc_commission * anchor_ugc_commission * ugc_turnover) ugc_as,
+            (dating_commission * anchor_dating_commission * dating_turnover) dating_as,
+            (message_commission * anchor_message_commission * message_turnover) message_as,
+
+            (gift_turnover+lottery_turnover+private_stream_turnover+stream_ticket_turnover+ugc_turnover+dating_turnover+message_turnover) total_turnover
+          from
+            turnovers
+        ), shares as (select
+            *,
+            (gift_gs+lottery_gs+private_stream_gs+stream_ticket_gs+ugc_gs+dating_gs+message_gs) total_gs,
+            (gift_as+lottery_as+private_stream_as+stream_ticket_as+ugc_gs+dating_as+message_as) total_as
+          from
+            total_turnover
+        ) select
+            guild_id,
+            anchor_uid,
+            #{po.settledFor} settled_for,
+            performance anchor_performance,
+            gift_commission,
+            lottery_commission,
+            private_stream_commission,
+            stream_ticket_commission,
+            ugc_commission,
+            dating_commission,
+            message_commission,
+            anchor_gift_commission,
+            anchor_lottery_commission,
+            anchor_private_stream_commission,
+            anchor_stream_ticket_commission,
+            anchor_ugc_commission,
+            anchor_dating_commission,
+            anchor_message_commission,
+            gift_turnover,
+            lottery_turnover,
+            private_stream_turnover,
+            stream_ticket_turnover,
+            ugc_turnover,
+            dating_turnover,
+            message_turnover,
+            (gift_turnover + lottery_turnover + private_stream_turnover + stream_ticket_turnover + ugc_turnover + dating_turnover + message_turnover),
+            gift_as,
+            lottery_as,
+            private_stream_as,
+            stream_ticket_as,
+            ugc_as,
+            dating_as,
+            message_as,
+            (total_gs - total_as) guild_share,
+            total_as anchor_share
+          from
+            shares
+    </insert>
+</mapper>

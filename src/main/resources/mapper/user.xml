@@ -1,0 +1,19 @@
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.playbaby.bb.admin.common.db.mapper.UserMapper">
+    <select id="findById" resultType="com.playbaby.bb.admin.common.entity.po.UserPO">
+        select * from user_1_0 where id=#{id}
+    </select>
+
+    <select id="userExists" resultType="java.lang.Integer">
+        select count(1) from user_1_0 where id=#{id}
+    </select>
+
+    <select id="isAnchor" resultType="java.lang.Boolean">
+        select count(1)>0 from user_1_0 where id=#{id} and is_anchor=1
+    </select>
+
+    <select id="findGuildIdByUID" resultType="java.lang.Integer">
+        select id from guilds where master_uid = #{id}
+    </select>
+</mapper>

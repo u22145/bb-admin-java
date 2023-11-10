@@ -1,0 +1,614 @@
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.playbaby.bb.admin.common.db.mapper.GuildRptMapper">
+    <select id="getGuildOverview">
+
+    </select>
+
+    <select id="getGuildAggrReport"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.AggregationVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with live_rpt as (
+      select
+        ls.guild_id guild_id,
+        SEC_TO_TIME(ifnull(sum(ls.duration), 0)) ls_duration,
+        ifnull(sum(ls.ticket_exp), 0) ticket_exp,
+        ifnull(sum(ls.ticket_buyers), 0) ticket_buyers,
+        ifnull(sum(ls.gift_exp), 0) gift_exp,
+        ifnull(sum(ls.gift_buyers), 0) gift_buyers
+      from
+        live_streams ls
+      where
+          if (#{io.guildInt} is null, ls.guild_id is not null, ls.guild_id=#{io.guildInt})
+      and if (#{io.fromDate} is null, 1, ls.started_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, ls.started_at &lt;= #{io.toDate})
+      group by guild_id
+    ), ps_rpt as (
+      select
+        ps.guild_id guild_id,
+        SEC_TO_TIME(ifnull(sum(ps.duration), 0)) ps_duration,
+        (ifnull(sum(ps.gift_exp), 0) + ifnull(sum(ps.stream_exp), 0)) ps_exp
+      from
+        private_streams ps
+      where
+          if (#{io.guildInt} is null, ps.guild_id is not null, ps.guild_id=#{io.guildInt})
+      and if (#{io.fromDate} is null, 1, ps.connected_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, ps.connected_at &lt;= #{io.toDate})
+      group by guild_id
+    ), pm_rpt as (
+      select
+        pm.guild_id guild_id,
+        ifnull(sum(pm.pm_exp), 0) pm_exp,
+        count(pm.id) as pm_cnt
+      from
+        private_messages pm
+      where
+          if (#{io.guildInt} is null, pm.guild_id is not null, pm.guild_id=#{io.guildInt})
+      and if (#{io.fromDate} is null, 1, pm.created_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, pm.created_at &lt;= #{io.toDate})
+      group by guild_id
+    ), rpt as (
+      select
+        g.id guild_id,
+        g.name guild_name,
+        u.id gm_id,
+        u.nickname gm_name,
+        ifnull(ls.ls_duration, SEC_TO_TIME(0)) live_duration ,
+        ifnull(ls.ticket_exp, 0) ticket_exp,
+        ifnull(ls.ticket_buyers, 0) ticket_buyers,
+        ifnull(ls.gift_exp, 0) gift_exp,
+        ifnull(ls.gift_buyers, 0) gift_buyers,
+        ifnull(ps.ps_duration, SEC_TO_TIME(0)) ps_duration,
+        ifnull(ps.ps_exp, 0) ps_exp,
+        ifnull(pm.pm_exp, 0) pm_exp,
+        ifnull(pm.pm_cnt, 0) pm_cnt,
+        0 lotto_exp,
+        0 ugc_exp,
+        (ifnull(ls.ticket_exp, 0) +
+         ifnull(ls.gift_exp, 0) +
+         ifnull(ps.ps_exp, 0) +
+         ifnull(pm.pm_exp, 0)) total
+      from
+        user_1_0 u,
+        guilds g
+        left join live_rpt ls on (g.id=ls.guild_id)
+        left join ps_rpt ps on (g.id=ps.guild_id)
+        left join pm_rpt pm on (g.id=pm.guild_id)
+      where
+        g.master_uid=u.id
+        and if (#{io.gmInt} is null, 1, u.id=#{io.gmInt})
+    ) select * from rpt where total &gt; 0 order by total desc
+    </select>
+
+    <select id="getLiveReport"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.LiveRptVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    SELECT
+      u.id uid,
+      u.nickname nickname,
+      SEC_TO_TIME(sum(duration)) as duration_total,
+      sum(ticket_exp) ticket_exp,
+      sum(ticket_buyers) ticket_buyers,
+      sum(gift_exp) gift_exp,
+      sum(gift_buyers) gift_buyers,
+      0 as lottery_exp,
+      sum(viewers) viewers,
+      (sum(viewers) / count(1)) avg_viewers,
+      (sum(ticket_exp) + sum(gift_exp)) total
+    FROM
+      live_streams ls,
+      user_1_0 u
+    where
+      ls.anchor_uid=u.id
+      AND ls.closed_at is not NULL
+      AND if (#{io.guildlessInt} = 1, ls.guild_id is null, ls.guild_id is not null)
+      AND if (#{io.guildInt} is null, ls.guild_id is not null, ls.guild_id=#{io.guildInt})
+      AND if (#{io.uidInt} is null, 1, u.id=#{io.uidInt})
+      AND if (#{io.fromDate} is null, 1, ls.started_at &gt;= #{io.fromDate})
+      AND if (#{io.toDate} is null, 1, ls.started_at &lt;= #{io.toDate})
+    group BY
+      u.id
+    </select>
+
+    <select id="getLiveAnchor"
+        resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.LiveAnchorVO"
+        parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    SELECT
+      u.id uid,
+      u.nickname,
+      g.id as guild_id,
+      g.name as guild_name,
+      SEC_TO_TIME(duration) duration,
+      ticket_price,
+      ticket_buyers,
+      ticket_exp,
+      gift_buyers,
+      gift_exp,
+      cast(0 as decimal(12,4)) as lottoExp,
+      (ticket_exp + gift_exp + 0) total,
+      viewers,
+      peak_viewers,
+      started_at,
+      closed_at
+    from
+      user_1_0 u,
+      live_streams ls
+    left join guilds g on (ls.guild_id=g.id)
+    where
+      ls.anchor_uid=u.id
+      AND ls.closed_at is not null
+      AND if (#{io.guildInt} is null, ls.guild_id is not null, ls.guild_id=#{io.guildInt})
+      AND if (#{io.uidInt} is null, 1, u.id=#{io.uidInt})
+      AND if (#{io.fromDate} is null, 1, ls.started_at &gt;= #{io.fromDate})
+      AND if (#{io.toDate} is null, 1, ls.started_at &lt;= #{io.toDate})
+    </select>
+
+    <select id="getPSReport"
+        resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.PSRptVO"
+        parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    select
+        u.id uid,
+        u.nickname,
+        SEC_TO_TIME(sum(duration)) as duration_total,
+        sum(gift_exp) gift_total,
+        sum(stream_exp) stream_total,
+        sum(gift_exp) + sum(stream_exp) as total,
+        count(1) as stream_cnt
+    FROM
+        private_streams ps,
+        user_1_0 u
+    WHERE
+        ps.anchor_uid = u.id
+        AND ps.connected_at is not null
+        -- we are only concerned with completed private stream
+        AND ps.status=#{io.completed}
+        AND if (#{io.guildInt} is null, ps.guild_id is not null, ps.guild_id=#{io.guildInt})
+        AND if (#{io.uidInt} is null, 1, u.id=#{io.uid})
+        AND if (#{io.fromDate} is null, 1, ps.connected_at &gt;= #{io.fromDate})
+        AND if (#{io.toDate} is null, 1, ps.connected_at &lt;= #{io.toDate})
+    GROUP BY
+        u.id
+    </select>
+
+    <select id="getPSAnchor"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.PSAnchorVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    select
+      u.id uid,
+      u.nickname,
+      g.id as guild_id,
+      g.name as guild_name,
+      SEC_TO_TIME(duration) duration,
+      cast(stream_exp/duration as decimal(12,4)) charge_per_min,
+      stream_exp,
+      gift_exp,
+      (stream_exp + gift_exp) as total,
+      ps.connected_at fromDT,
+      ps.closed_at toDT
+    from
+        user_1_0 u,
+        private_streams ps
+    left join guilds g on (ps.guild_id=g.id)
+    where
+        ps.anchor_uid = u.id
+        AND ps.connected_at is not null
+            -- we are only concerned with completed private stream
+        AND ps.status=#{io.completed}
+        AND if (#{io.guildInt} is null, ps.guild_id is not null, ps.guild_id=#{io.guildInt})
+        AND if (#{io.uidInt} is null, 1, u.id=#{io.uid})
+        AND if (#{io.fromDate} is null, 1, ps.connected_at &gt;= #{io.fromDate})
+        AND if (#{io.toDate} is null, 1, ps.connected_at &lt;= #{io.toDate})
+    </select>
+
+    <select id="getPMReport"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.PMRptVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    select
+      u.id uid,
+      u.nickname nickname,
+      sum(pm.pm_exp) pm_exp,
+      count(1) pm_cnt,
+      count(distinct from_uid) senders
+    FROM
+      user_1_0 u,
+      private_messages pm
+    where
+      pm.to_uid=u.id
+      AND if (#{io.guildlessInt} = 1, pm.guild_id is null, pm.guild_id is not null)
+      AND if (#{io.guildInt} is null, pm.guild_id is not null, pm.guild_id=#{io.guildInt})
+      AND if (#{io.uidInt} is null, 1, u.id=#{io.uid})
+      AND if (#{io.fromDate} is null, 1, pm.created_at &gt;= #{io.fromDate})
+      AND if (#{io.toDate} is null, 1, pm.created_at &lt;= #{io.toDate})
+    group by
+      u.id
+    </select>
+
+    <select id="getPMAnchor"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.PMAnchorVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    select
+        to_uid uid, pm_exp, created_at
+    from
+        private_messages pm
+    where
+        if (#{io.guildInt} is null, pm.guild_id is not null, pm.guild_id=#{io.guildInt})
+        AND if (#{io.uidInt} is null, 1, pm.to_uid=#{io.uid})
+    </select>
+
+    <select id="getGuildPerf"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.GuildPerfVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+        with rpt as (
+          select
+            g.id guild_id,
+            g.name guild_name,
+            sum(gift_turnover) gift_exp,
+            sum(lottery_turnover) lotto_exp,
+            sum(private_stream_turnover) ps_exp,
+            sum(stream_ticket_turnover) ticket_exp,
+            sum(ugc_turnover) ugc_exp,
+            sum(dating_turnover) dating_exp,
+            sum(message_turnover) pm_exp,
+            sum(guild_share) commission
+          from
+            guilds g,
+            guild_settlements s
+          where
+            g.id=s.guild_id
+            and if (#{io.fromDate} is null, 1, settled_for &gt;= #{io.fromDate})
+            and if (#{io.toDate} is null, 1, settled_for &lt;= #{io.toDate})
+          group by s.guild_id
+        ) select
+              guild_id, guild_name,
+              gift_exp, lotto_exp, ps_exp, ticket_exp, ugc_exp, dating_exp, pm_exp,
+              (gift_exp + lotto_exp + ps_exp + ticket_exp + ugc_exp + dating_exp + pm_exp) total,
+              commission
+          from rpt order by total ${io.sortStr}
+    </select>
+
+    <!--
+    <select id="getGuildPerfBak"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.GuildPerfVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with live_rpt as (
+      SELECT
+        guild_id,
+        sum(gift_exp) gift_exp,
+        sum(ticket_exp) ticket_exp
+      FROM
+        live_streams
+      where
+          guild_id is not null
+      and if (#{io.fromDate} is null, 1, started_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, started_at &lt;= #{io.toDate})
+      group by
+        guild_id
+    ), ps_rpt as (
+      SELECT
+        guild_id,
+        sum(gift_exp) gift_exp,
+        sum(stream_exp) ps_exp
+      FROM
+        private_streams
+      where
+          guild_id is not null
+      and if (#{io.fromDate} is null, 1, connected_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, connected_at &lt;= #{io.toDate})
+      group by
+        guild_id
+    ), pm_rpt as (
+      SELECT
+        guild_id,
+        sum(pm_exp) pm_exp
+      FROM
+        private_messages
+      where
+          guild_id is not null
+      and if (#{io.fromDate} is null, 1, created_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, created_at &lt;= #{io.toDate})
+      group by
+        guild_id
+    ), aggr_rpt as (
+      select
+        g.id guild_id,
+        g.name guild_name,
+        (ifnull(ls.gift_exp, 0) + ifnull(ps.gift_exp, 0)) gift_exp,
+        ifnull(ls.ticket_exp, 0) ticket_exp,
+        ifnull(ps.ps_exp, 0) ps_exp,
+        ifnull(pm.pm_exp, 0) pm_exp,
+        0 lotto_exp,
+        0 ugc_exp,
+        0 commission
+      FROM
+        guilds g
+        left join live_rpt ls on (ls.guild_id=g.id)
+        left join ps_rpt ps on (ps.guild_id=g.id)
+        left join pm_rpt pm on (pm.guild_id=g.id)
+    ), total_exp as (
+      select *,
+        (gift_exp + ticket_exp + ps_exp + pm_exp + lotto_exp + ugc_exp) total
+      from
+        aggr_rpt
+    ) select * from total_exp order by total ${io.sortStr}
+    </select>
+    -->
+
+    <select id="getGMGuildPerf"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.GuildPerfVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with live_rpt as (
+      SELECT
+        guild_id,
+        sum(gift_exp) gift_exp,
+        sum(ticket_exp) ticket_exp
+      FROM
+        live_streams
+      where
+          guild_id is not null
+      and if (#{io.fromDate} is null, 1, started_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, started_at &lt;= #{io.toDate})
+      group by
+        guild_id
+    ), ps_rpt as (
+      SELECT
+        guild_id,
+        sum(gift_exp) gift_exp,
+        sum(stream_exp) ps_exp
+      FROM
+        private_streams
+      where
+          guild_id is not null
+      and if (#{io.fromDate} is null, 1, connected_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, connected_at &lt;= #{io.toDate})
+      group by
+        guild_id
+    ), pm_rpt as (
+      SELECT
+        guild_id,
+        sum(pm_exp) pm_exp
+      FROM
+        private_messages
+      where
+          guild_id is not null
+      and if (#{io.fromDate} is null, 1, created_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, created_at &lt;= #{io.toDate})
+      group by
+        guild_id
+    ), aggr_rpt as (
+      select
+        g.id guild_id,
+        g.name guild_name,
+        (ifnull(ls.gift_exp, 0) + ifnull(ps.gift_exp, 0)) gift_exp,
+        ifnull(ls.ticket_exp, 0) ticket_exp,
+        ifnull(ps.ps_exp, 0) ps_exp,
+        ifnull(pm.pm_exp, 0) pm_exp,
+        0 lotto_exp,
+        0 ugc_exp,
+        0 commission,
+        0 anchor_commission
+      FROM
+        guilds g
+        left join live_rpt ls on (ls.guild_id=g.id)
+        left join ps_rpt ps on (ps.guild_id=g.id)
+        left join pm_rpt pm on (pm.guild_id=g.id)
+    ), total_exp as (
+      select *,
+        (gift_exp + ticket_exp + ps_exp + pm_exp + lotto_exp + ugc_exp) total
+      from
+        aggr_rpt
+    ) select * from total_exp where guild_id = ${io.guildInt}
+    </select>
+
+    <select id="getAnchorPerf"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.AnchorPerfVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with rpt as (
+      select
+        g.id guild_id,
+        g.name guild_name,
+        u.id uid,
+        u.nickname,
+        sum(gift_turnover) gift_exp,
+        sum(lottery_turnover) lotto_exp,
+        sum(private_stream_turnover) ps_exp,
+        sum(stream_ticket_turnover) ticket_exp,
+        sum(ugc_turnover) ugc_exp,
+        sum(dating_turnover) dating_exp,
+        sum(message_turnover) pm_exp,
+        sum(anchor_profit) commission
+      from
+        user_1_0 u,
+        guilds g,
+        guild_anchor_settlements s
+      where
+        g.id=s.guild_id
+        and s.anchor_id=u.id
+        and if (#{io.fromDate} is null, 1, settled_for &gt;= #{io.fromDate})
+        and if (#{io.toDate} is null, 1, settled_for &lt;= #{io.toDate})
+      group by s.guild_id, s.anchor_id
+    ) select
+      guild_id, guild_name, uid, nickname,
+      gift_exp, lotto_exp, ps_exp, ticket_exp, ugc_exp, dating_exp, pm_exp,
+      (gift_exp + lotto_exp + ps_exp + ticket_exp + ugc_exp + dating_exp + pm_exp) total,
+      commission
+      from rpt order by total ${io.sortStr}
+    </select>
+
+    <!--
+    <select id="getAnchorPerfBak"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.AnchorPerfVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with live_rpt as (
+      SELECT
+        anchor_uid uid,
+        sum(gift_exp) gift_exp,
+        sum(ticket_exp) ticket_exp
+      FROM
+        live_streams
+      where
+          anchor_uid is not null
+      and if (#{io.fromDate} is null, 1, started_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, started_at &lt;= #{io.toDate})
+      group by
+        anchor_uid
+    ), ps_rpt as (
+      SELECT
+        anchor_uid uid,
+        sum(gift_exp) gift_exp,
+        sum(stream_exp) ps_exp
+      FROM
+        private_streams
+      where
+          anchor_uid is not null
+      and if (#{io.fromDate} is null, 1, connected_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, connected_at &lt;= #{io.toDate})
+      group by
+        anchor_uid
+    ), pm_rpt as (
+      SELECT
+        to_uid uid,
+        sum(pm_exp) pm_exp
+      FROM
+        private_messages
+      where
+          to_uid is not null
+      and if (#{io.fromDate} is null, 1, created_at &gt;= #{io.fromDate})
+      and if (#{io.toDate} is null, 1, created_at &lt;= #{io.toDate})
+      group by
+        to_uid
+    ), aggr_rpt as (
+      select
+        g.id guild_id,
+        g.name guild_name,
+        u.id uid,
+        u.nickname nickname,
+        (ifnull(ls.gift_exp, 0) + ifnull(ps.gift_exp, 0)) gift_exp,
+        ifnull(ls.ticket_exp, 0) ticket_exp,
+        ifnull(ps.ps_exp, 0) ps_exp,
+        ifnull(pm.pm_exp, 0) pm_exp,
+        0 lotto_exp,
+        0 ugc_exp
+      FROM
+        user_1_0 u,
+        guilds g,
+        guild_anchor_setting a
+        left join live_rpt ls on (ls.uid=a.uid)
+        left join ps_rpt ps on (ps.uid=a.uid)
+        left join pm_rpt pm on (pm.uid=a.uid)
+      where
+        a.uid=u.id
+        and a.gid = g.id
+    ), total_exp as (
+      select *,
+        (gift_exp + ticket_exp + ps_exp + pm_exp + lotto_exp + ugc_exp) total
+      from
+        aggr_rpt
+    ) select * from total_exp order by total ${io.sortStr}
+    </select>
+    -->
+
+    <select id="getGuildCommission"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.GuildCommissionVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with rpt as (
+      select
+        g.id guild_id,
+        g.name guild_name,
+        u.id uid,
+        u.nickname,
+        sum(gift_turnover) gift_exp,
+        sum(lottery_turnover) lotto_exp,
+        sum(private_stream_turnover) ps_exp,
+        sum(stream_ticket_turnover) ticket_exp,
+        sum(ugc_turnover) ugc_exp,
+        sum(dating_turnover) dating_exp,
+        sum(message_turnover) pm_exp,
+        sum(guild_profit) guild_commission,
+        sum(anchor_profit) anchor_commission
+      from
+        user_1_0 u,
+        guilds g,
+        guild_anchor_settlements s
+      where
+        g.id=s.guild_id
+        and s.anchor_id=u.id
+        and if (#{io.fromDate} is null, 1, settled_for &gt;= #{io.fromDate})
+        and if (#{io.toDate} is null, 1, settled_for &lt;= #{io.toDate})
+        and if (#{io.guildInt} is null, s.guild_id is not null, s.guild_id=#{io.guildInt})
+        and if (#{io.uidInt} is null, 1, s.anchor_id=#{io.uidInt})
+      group by s.guild_id, s.anchor_id
+    ) select
+      *,
+      (gift_exp + lotto_exp + ps_exp + ticket_exp + ugc_exp + dating_exp + pm_exp) total,
+      (guild_commission + anchor_commission) total_commission
+      from rpt
+    </select>
+
+    <select id="getAnchorPerfAssessment"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.AnchorPerfAssessmentVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with rpt as (
+      SELECT
+        u.id uid,
+        u.nickname,
+        s.settled_for `date`,
+        turnover total,
+        s.anchor_performance performance
+      FROM
+        guild_anchor_settlements s,
+        user_1_0 u
+      WHERE
+        u.id=s.anchor_id
+        and if (#{io.fromDate} is null, 1, s.settled_for=#{io.fromDate})
+        and if (#{io.guildInt} is null, s.guild_id is not null, s.guild_id=#{io.guildInt})
+    ) select
+        *,
+        if (total >= rpt.performance, 1, if (s.uid is not null, 1, 0)) reached
+      from
+        rpt
+      left join guild_anchor_perf_assessments s on (rpt.uid=s.uid and rpt.`date`=s.assessed_for)
+      order by
+        total desc
+    </select>
+
+    <select id="getGMAnchorCommission"
+            resultType="com.playbaby.bb.admin.common.entity.vo.guild.bo.GuildCommissionVO"
+            parameterType="com.playbaby.bb.admin.common.entity.io.GuildRptIO">
+    with rpt as (
+      select
+        u.id uid,
+        u.nickname,
+        sum(gift_turnover) gift_exp,
+        sum(lottery_turnover) lotto_exp,
+        sum(private_stream_turnover) ps_exp,
+        sum(stream_ticket_turnover) ticket_exp,
+        sum(ugc_turnover) ugc_exp,
+        sum(dating_turnover) dating_exp,
+        sum(message_turnover) pm_exp,
+        sum(guild_profit) guild_commission,
+        sum(anchor_profit) anchor_commission
+      from
+        user_1_0 u,
+        guild_anchor_settlements s
+      where
+        s.guild_id = #{io.guildInt}
+        and s.anchor_id=u.id
+        and if (#{io.uid} is null, 1, s.anchor_id=#{io.uid})
+        and if (#{io.fromDate} is null, 1, settled_for &gt;= #{io.fromDate})
+        and if (#{io.toDate} is null, 1, settled_for &lt;= #{io.toDate})
+      group by s.guild_id, s.anchor_id
+    ) select
+        null guild_id, null guild_name,
+        uid, nickname,
+        gift_exp, lotto_exp, ps_exp, ticket_exp, ugc_exp, dating_exp, pm_exp,
+        (gift_exp + lotto_exp + ps_exp + ticket_exp + ugc_exp + dating_exp + pm_exp) total,
+        guild_commission, anchor_commission, null total_commission
+      from rpt order by total ${io.sortStr}
+    </select>
+
+    <insert id="approveAnchorPerfAssessment"
+            parameterType="com.playbaby.bb.admin.common.entity.io.PerfAssessmentIApprovalIO">
+        insert ignore into guild_anchor_perf_assessments
+        select uid, performance, #{io.date} from guild_anchor_setting where uid=#{io.uid} and gid=#{io.guildId}
+    </insert>
+</mapper>
